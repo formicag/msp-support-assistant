@@ -32,8 +32,15 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Load AWS credentials from Streamlit secrets (for Streamlit Cloud)
+# This sets environment variables that boto3 will use
+if hasattr(st, 'secrets'):
+    for key in ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_DEFAULT_REGION']:
+        if key in st.secrets:
+            os.environ[key] = st.secrets[key]
+
 # Environment configuration
-AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", os.environ.get("AWS_REGION", "us-east-1"))
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "demo")
 PROJECT_NAME = os.environ.get("PROJECT_NAME", "msp-support-assistant")
 
