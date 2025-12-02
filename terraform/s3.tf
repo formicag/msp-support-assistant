@@ -55,6 +55,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "vector_store" {
     id     = "cleanup-old-versions"
     status = "Enabled"
 
+    filter {}  # Required: empty filter applies to all objects
+
     noncurrent_version_expiration {
       noncurrent_days = 30
     }
@@ -109,6 +111,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "artifacts" {
     id     = "cleanup-old-versions"
     status = "Enabled"
 
+    filter {}  # Required: empty filter applies to all objects
+
     noncurrent_version_expiration {
       noncurrent_days = 90
     }
@@ -117,6 +121,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "artifacts" {
   rule {
     id     = "transition-to-ia"
     status = "Enabled"
+
+    filter {}  # Required: empty filter applies to all objects
 
     transition {
       days          = 30

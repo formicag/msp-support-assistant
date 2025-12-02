@@ -8,7 +8,7 @@
 
 # Encryption policy - required before collection creation
 resource "aws_opensearchserverless_security_policy" "encryption" {
-  name = "${local.name_prefix}-encryption"
+  name = "msp-kb-encryption"  # Max 32 chars
   type = "encryption"
 
   policy = jsonencode({
@@ -26,7 +26,7 @@ resource "aws_opensearchserverless_security_policy" "encryption" {
 
 # Network policy - allow public access (for demo; restrict in production)
 resource "aws_opensearchserverless_security_policy" "network" {
-  name = "${local.name_prefix}-network"
+  name = "msp-kb-network"  # Max 32 chars
   type = "network"
 
   policy = jsonencode([
@@ -56,7 +56,7 @@ resource "aws_opensearchserverless_security_policy" "network" {
 # -----------------------------------------------------------------------------
 
 resource "aws_opensearchserverless_access_policy" "data_access" {
-  name = "${local.name_prefix}-data-access"
+  name = "msp-kb-data-access"  # Max 32 chars
   type = "data"
 
   policy = jsonencode([

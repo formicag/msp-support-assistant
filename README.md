@@ -9,6 +9,15 @@ A fully serverless AI-powered support ticket assistant powered by **AWS Bedrock 
 
 ---
 
+## Live Demo
+
+| Service | URL |
+|---------|-----|
+| **Streamlit App** | https://ut48uszr3s.us-east-1.awsapprunner.com |
+| **API Gateway** | https://p3h9ge8d92.execute-api.us-east-1.amazonaws.com |
+
+---
+
 ## Features
 
 - **Natural Language Ticket Management**: Create, update, and query support tickets through conversational AI

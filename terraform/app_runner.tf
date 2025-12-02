@@ -57,9 +57,8 @@ resource "aws_apprunner_service" "streamlit" {
     }
   }
 
-  observability_configuration {
-    observability_enabled = true
-  }
+  # Observability disabled - requires additional configuration for X-Ray tracing
+  # Enable later with observability_configuration_arn if needed
 
   tags = merge(local.cost_tags, {
     Name = "${local.name_prefix}-streamlit"
@@ -75,13 +74,13 @@ resource "aws_apprunner_service" "streamlit" {
 # -----------------------------------------------------------------------------
 
 resource "aws_apprunner_auto_scaling_configuration_version" "streamlit" {
-  auto_scaling_configuration_name = "${local.name_prefix}-streamlit-autoscaling"
+  auto_scaling_configuration_name = "msp-streamlit-asc"  # Max 32 chars
 
   max_concurrency = 100
   max_size        = 5
   min_size        = 1
 
   tags = merge(local.cost_tags, {
-    Name = "${local.name_prefix}-streamlit-autoscaling"
+    Name = "msp-streamlit-autoscaling"
   })
 }

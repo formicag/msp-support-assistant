@@ -29,8 +29,18 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 API_GATEWAY_ENDPOINT = os.environ.get("API_GATEWAY_ENDPOINT", "")
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "demo")
 
-# Initialize AWS clients
-bedrock_runtime = boto3.client("bedrock-runtime", region_name=AWS_REGION)
+
+def get_bedrock_client():
+    """Get or create Bedrock runtime client (lazy initialization)."""
+    if "bedrock_client" not in st.session_state:
+        try:
+            st.session_state.bedrock_client = boto3.client(
+                "bedrock-runtime", region_name=AWS_REGION
+            )
+        except Exception as e:
+            st.error(f"Failed to initialize Bedrock client: {e}")
+            return None
+    return st.session_state.bedrock_client
 
 
 def init_session_state():
@@ -67,6 +77,10 @@ Format ticket information clearly when displaying it."""
 def invoke_bedrock_model(prompt: str, model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0") -> str:
     """Invoke Bedrock model for response generation."""
     try:
+        bedrock_client = get_bedrock_client()
+        if bedrock_client is None:
+            return "I apologize, but the AI service is not available at the moment. Please try again later."
+
         # Build conversation history
         messages = []
         for msg in st.session_state.messages[-10:]:  # Last 10 messages for context
@@ -88,7 +102,7 @@ def invoke_bedrock_model(prompt: str, model_id: str = "anthropic.claude-3-sonnet
             "messages": messages,
         }
 
-        response = bedrock_runtime.invoke_model(
+        response = bedrock_client.invoke_model(
             modelId=model_id,
             body=json.dumps(body),
         )
