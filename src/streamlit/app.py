@@ -409,18 +409,40 @@ In the meantime, you can still:
 The ticket API works without AWS credentials since it uses the public API Gateway endpoint."""
 
         # Build conversation history for Converse API
+        # Must start with user message, so we filter and ensure proper alternation
         messages = []
-        for msg in st.session_state.messages[-10:]:
+        history = st.session_state.messages[-10:]
+
+        # Find first user message in history
+        start_idx = 0
+        for i, msg in enumerate(history):
+            if msg["role"] == "user":
+                start_idx = i
+                break
+
+        # Build messages from first user message, ensuring alternation
+        for msg in history[start_idx:]:
+            # Skip if we'd have two messages from same role in a row
+            if messages and messages[-1]["role"] == msg["role"]:
+                continue
             messages.append({
                 "role": msg["role"],
                 "content": [{"text": msg["content"]}]
             })
+
+        # Ensure we don't end with assistant (we're about to add user message)
+        if messages and messages[-1]["role"] == "assistant":
+            pass  # That's fine, next message will be user
 
         # Add current message
         messages.append({
             "role": "user",
             "content": [{"text": prompt}]
         })
+
+        # Final safety check: remove duplicate user messages at end
+        while len(messages) >= 2 and messages[-1]["role"] == "user" and messages[-2]["role"] == "user":
+            messages.pop(-2)
 
         # First call with tools using Converse API
         response = bedrock_client.converse(
