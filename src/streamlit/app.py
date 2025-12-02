@@ -35,15 +35,19 @@ st.set_page_config(
 # Load AWS credentials from Streamlit secrets (for Streamlit Cloud)
 # This sets environment variables that boto3 will use
 _credentials_loaded = []
-if hasattr(st, 'secrets'):
-    for key in ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_DEFAULT_REGION']:
-        if key in st.secrets:
-            value = st.secrets[key]
-            # Strip any whitespace or quotes that might have been added
-            if isinstance(value, str):
-                value = value.strip().strip('"').strip("'")
-            os.environ[key] = value
-            _credentials_loaded.append(key)
+try:
+    if hasattr(st, 'secrets') and len(st.secrets) > 0:
+        for key in ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_DEFAULT_REGION']:
+            if key in st.secrets:
+                value = st.secrets[key]
+                # Strip any whitespace or quotes that might have been added
+                if isinstance(value, str):
+                    value = value.strip().strip('"').strip("'")
+                os.environ[key] = value
+                _credentials_loaded.append(key)
+except Exception:
+    # No secrets file - running locally with AWS_PROFILE
+    pass
 
 # Environment configuration
 AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", os.environ.get("AWS_REGION", "us-east-1"))
