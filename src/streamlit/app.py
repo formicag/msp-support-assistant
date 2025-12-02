@@ -50,52 +50,58 @@ API_GATEWAY_ENDPOINT = os.environ.get(
 )
 
 
-def get_ssm_client():
-    """Get SSM client for loading configuration."""
-    if "ssm_client" not in st.session_state:
-        try:
-            st.session_state.ssm_client = boto3.client("ssm", region_name=AWS_REGION)
-        except Exception as e:
-            st.warning(f"SSM client not available: {e}")
-            return None
-    return st.session_state.ssm_client
-
-
 def load_config_from_ssm():
-    """Load AgentCore Gateway configuration from SSM Parameter Store."""
-    ssm = get_ssm_client()
-    if not ssm:
+    """Load AgentCore Gateway configuration from SSM Parameter Store.
+
+    Returns empty config if AWS credentials are not available (e.g., Streamlit Cloud).
+    """
+    # Skip SSM if we detect we're on Streamlit Cloud without credentials
+    # or if environment variables are already set
+    if MCP_ENDPOINT or COGNITO_CLIENT_ID:
+        return {
+            "mcp_endpoint": MCP_ENDPOINT,
+            "cognito_client_id": COGNITO_CLIENT_ID,
+        }
+
+    try:
+        ssm = boto3.client("ssm", region_name=AWS_REGION)
+
+        config = {}
+        params = [
+            ("agentcore-mcp-endpoint", "mcp_endpoint"),
+            ("cognito-client-id", "cognito_client_id"),
+            ("cognito-discovery-url", "cognito_discovery_url"),
+        ]
+
+        for param_name, config_key in params:
+            try:
+                response = ssm.get_parameter(
+                    Name=f"/{PROJECT_NAME}/{ENVIRONMENT}/{param_name}"
+                )
+                config[config_key] = response["Parameter"]["Value"]
+            except ClientError:
+                pass
+
+        return config
+    except Exception:
+        # No AWS credentials available - this is fine for Streamlit Cloud
+        # The app will work with direct API calls
         return {}
-
-    config = {}
-    params = [
-        ("agentcore-mcp-endpoint", "mcp_endpoint"),
-        ("cognito-client-id", "cognito_client_id"),
-        ("cognito-discovery-url", "cognito_discovery_url"),
-    ]
-
-    for param_name, config_key in params:
-        try:
-            response = ssm.get_parameter(
-                Name=f"/{PROJECT_NAME}/{ENVIRONMENT}/{param_name}"
-            )
-            config[config_key] = response["Parameter"]["Value"]
-        except ClientError:
-            pass
-
-    return config
 
 
 def get_bedrock_client():
     """Get or create Bedrock runtime client (lazy initialization)."""
     if "bedrock_client" not in st.session_state:
+        st.session_state.bedrock_client = None
         try:
-            st.session_state.bedrock_client = boto3.client(
-                "bedrock-runtime", region_name=AWS_REGION
-            )
-        except Exception as e:
-            st.error(f"Failed to initialize Bedrock client: {e}")
-            return None
+            client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
+            # Test if credentials are available by checking caller identity
+            sts = boto3.client("sts", region_name=AWS_REGION)
+            sts.get_caller_identity()
+            st.session_state.bedrock_client = client
+        except Exception:
+            # No AWS credentials - Bedrock won't work, but API calls will
+            st.session_state.bedrock_client = None
     return st.session_state.bedrock_client
 
 
@@ -345,7 +351,25 @@ def invoke_agent(prompt: str, model_id: str = "anthropic.claude-3-sonnet-2024022
     try:
         bedrock_client = get_bedrock_client()
         if bedrock_client is None:
-            return "I apologize, but the AI service is not available. Please check your AWS configuration."
+            # No AWS credentials - show helpful message with setup instructions
+            return """**AWS Credentials Required**
+
+To enable the AI agent, you need to configure AWS credentials in Streamlit Cloud:
+
+1. Go to **Settings > Secrets** in your Streamlit Cloud app
+2. Add the following secrets in TOML format:
+
+```toml
+AWS_ACCESS_KEY_ID = "your-access-key"
+AWS_SECRET_ACCESS_KEY = "your-secret-key"
+AWS_DEFAULT_REGION = "us-east-1"
+```
+
+In the meantime, you can still:
+- Use the **Quick Ticket Form** in the sidebar to create tickets
+- Click **List Tickets** to view existing tickets via the API
+
+The ticket API works without AWS credentials since it uses the public API Gateway endpoint."""
 
         # Build conversation history
         messages = []
@@ -446,15 +470,18 @@ def render_sidebar():
         st.markdown("---")
 
         # AgentCore status
-        st.subheader("AgentCore Status")
-        config = st.session_state.get("config", {})
+        st.subheader("Status")
 
-        if config.get("mcp_endpoint"):
-            st.success("Gateway: Connected")
-            st.caption(f"MCP: {config['mcp_endpoint'][:40]}...")
+        # Check Bedrock availability
+        bedrock_available = get_bedrock_client() is not None
+        if bedrock_available:
+            st.success("AI Agent: Available")
         else:
-            st.warning("Gateway: Not configured")
-            st.caption("Using direct API calls")
+            st.warning("AI Agent: No credentials")
+            st.caption("Configure AWS secrets to enable")
+
+        st.success("Ticket API: Available")
+        st.caption(f"API: {API_GATEWAY_ENDPOINT[:35]}...")
 
         st.markdown("---")
 
@@ -482,6 +509,50 @@ def render_sidebar():
             st.session_state.messages = []
             st.session_state.tool_results = []
             st.rerun()
+
+        st.markdown("---")
+
+        # Direct API access (works without Bedrock)
+        st.subheader("Direct API Access")
+        st.caption("Works without AWS credentials")
+
+        if st.button("📋 View Tickets (API)", use_container_width=True):
+            with st.spinner("Fetching tickets..."):
+                result = call_ticket_api("/tickets?limit=10")
+                if "error" not in result:
+                    tickets = result.get("tickets", [])
+                    if tickets:
+                        for t in tickets[:5]:
+                            st.markdown(f"**{t.get('TicketId', 'N/A')[:20]}**")
+                            st.caption(f"{t.get('Title', 'N/A')} - {t.get('Status', 'N/A')}")
+                    else:
+                        st.info("No tickets found")
+                else:
+                    st.error(result["error"])
+
+        # Quick ticket form
+        with st.expander("➕ Create Ticket"):
+            with st.form("quick_ticket"):
+                title = st.text_input("Title")
+                description = st.text_area("Description", height=80)
+                priority = st.selectbox("Priority", ["Low", "Medium", "High", "Critical"])
+                category = st.selectbox("Category", ["General", "Network", "Hardware", "Software", "Security"])
+
+                if st.form_submit_button("Create", use_container_width=True):
+                    if title and description:
+                        result = call_ticket_api("/tickets", "POST", {
+                            "title": title,
+                            "description": description,
+                            "priority": priority,
+                            "category": category
+                        })
+                        if "error" not in result:
+                            ticket = result.get("ticket", {})
+                            st.success(f"Created: {ticket.get('TicketId', 'OK')}")
+                        else:
+                            st.error(result["error"])
+                    else:
+                        st.warning("Title and description required")
 
         st.markdown("---")
 
