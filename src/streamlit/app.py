@@ -34,10 +34,16 @@ st.set_page_config(
 
 # Load AWS credentials from Streamlit secrets (for Streamlit Cloud)
 # This sets environment variables that boto3 will use
+_credentials_loaded = []
 if hasattr(st, 'secrets'):
     for key in ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_DEFAULT_REGION']:
         if key in st.secrets:
-            os.environ[key] = st.secrets[key]
+            value = st.secrets[key]
+            # Strip any whitespace or quotes that might have been added
+            if isinstance(value, str):
+                value = value.strip().strip('"').strip("'")
+            os.environ[key] = value
+            _credentials_loaded.append(key)
 
 # Environment configuration
 AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", os.environ.get("AWS_REGION", "us-east-1"))
@@ -509,6 +515,21 @@ def render_sidebar():
         else:
             st.warning("AI Agent: No credentials")
             st.caption("Configure AWS secrets to enable")
+
+        # Debug info (expandable)
+        with st.expander("🔧 Debug Info"):
+            st.caption(f"Credentials loaded: {_credentials_loaded}")
+            access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
+            if access_key:
+                st.caption(f"Access Key: {access_key[:8]}...{access_key[-4:]}")
+            else:
+                st.caption("Access Key: NOT SET")
+            session_token = os.environ.get("AWS_SESSION_TOKEN", "")
+            if session_token:
+                st.caption(f"Session Token: {session_token[:20]}...({len(session_token)} chars)")
+            else:
+                st.caption("Session Token: NOT SET")
+            st.caption(f"Region: {AWS_REGION}")
 
         st.success("Ticket API: Available")
         st.caption(f"API: {API_GATEWAY_ENDPOINT[:35]}...")
