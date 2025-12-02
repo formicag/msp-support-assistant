@@ -74,7 +74,7 @@ resource "aws_apprunner_service" "streamlit" {
 # -----------------------------------------------------------------------------
 
 resource "aws_apprunner_auto_scaling_configuration_version" "streamlit" {
-  auto_scaling_configuration_name = "msp-streamlit-asc"  # Max 32 chars
+  auto_scaling_configuration_name = "msp-streamlit-asc" # Max 32 chars
 
   max_concurrency = 100
   max_size        = 5

@@ -54,5 +54,8 @@ ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
 ENV STREAMLIT_SERVER_HEADLESS=true
 ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 
-# Run Streamlit
-ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# App selection via environment variable (app.py or app_agentcore.py)
+ENV STREAMLIT_APP=app_agentcore.py
+
+# Run Streamlit with AgentCore app by default
+ENTRYPOINT ["sh", "-c", "streamlit run ${STREAMLIT_APP} --server.port=8501 --server.address=0.0.0.0"]

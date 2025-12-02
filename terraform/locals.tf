@@ -19,9 +19,9 @@ locals {
   account_id = data.aws_caller_identity.current.account_id
 
   # GitHub OIDC subject claim patterns
-  github_oidc_subject = "repo:${var.github_org}/${var.github_repo}:*"
+  github_oidc_subject      = "repo:${var.github_org}/${var.github_repo}:*"
   github_oidc_subject_main = "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main"
-  github_oidc_subject_pr = "repo:${var.github_org}/${var.github_repo}:pull_request"
+  github_oidc_subject_pr   = "repo:${var.github_org}/${var.github_repo}:pull_request"
 
   # Resource ARNs
   bedrock_model_arns = [
