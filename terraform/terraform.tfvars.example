@@ -1,0 +1,33 @@
+# =============================================================================
+# Example Terraform Variables
+# Copy this file to terraform.tfvars and customize as needed
+# =============================================================================
+
+# Project Configuration
+project_name = "msp-support-assistant"
+environment  = "demo"
+aws_region   = "us-east-1"
+
+# GitHub Configuration (for OIDC)
+github_org  = "formicag"
+github_repo = "msp-support-assistant"
+
+# Bedrock Models
+bedrock_claude_model_id    = "anthropic.claude-3-sonnet-20240229-v1:0"
+bedrock_titan_model_id     = "amazon.titan-text-express-v1"
+bedrock_embedding_model_id = "amazon.titan-embed-text-v2:0"
+
+# OpenSearch Configuration
+opensearch_collection_name = "msp-knowledge-base"
+opensearch_index_name      = "tickets-index"
+embedding_dimension        = 1024
+
+# App Runner Configuration
+streamlit_cpu    = "1024"
+streamlit_memory = "2048"
+streamlit_port   = 8501
+
+# Lambda Configuration
+lambda_runtime     = "python3.11"
+lambda_timeout     = 30
+lambda_memory_size = 256

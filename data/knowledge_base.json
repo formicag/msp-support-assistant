@@ -1,0 +1,86 @@
+[
+  {
+    "id": "KB-001",
+    "title": "VPN Troubleshooting Guide",
+    "category": "Network",
+    "content": "Common VPN issues and solutions:\n\n1. **Connection Drops**: Check MTU settings (try 1400), verify no firewall blocking UDP 500/4500.\n2. **Slow Performance**: Enable split tunneling for non-corporate traffic, check bandwidth limits.\n3. **Authentication Failures**: Verify credentials, check certificate expiry, ensure time sync.\n4. **Cannot Connect**: Check VPN server status, verify client version, try alternate server.\n\nEscalation: If issues persist after 30 minutes, escalate to Network team.",
+    "tags": ["vpn", "network", "troubleshooting", "connectivity"]
+  },
+  {
+    "id": "KB-002",
+    "title": "Email Delivery Troubleshooting",
+    "category": "Software",
+    "content": "Email delivery issues resolution:\n\n1. **Internal Delays**: Check Exchange queue, verify transport rules, review message tracking.\n2. **External Delays**: Check SPF/DKIM/DMARC, review mail flow rules, check for blacklisting.\n3. **Bounce Backs**: Verify recipient address, check attachment size limits (25MB default).\n4. **Missing Emails**: Check spam/junk folders, review mail flow rules, check retention policies.\n\nTools: Use Message Trace in Exchange Admin Center for detailed tracking.",
+    "tags": ["email", "exchange", "troubleshooting", "mail-flow"]
+  },
+  {
+    "id": "KB-003",
+    "title": "Printer Installation and Troubleshooting",
+    "category": "Hardware",
+    "content": "Printer setup and common issues:\n\n**Installation**:\n1. Connect printer to network (or USB)\n2. Install manufacturer driver (not generic Windows driver)\n3. Configure default paper size and quality\n4. Test print\n\n**Troubleshooting**:\n1. **Not Recognized**: Reinstall driver, clear print spooler\n2. **Print Quality**: Replace toner, clean print heads, check paper type\n3. **Paper Jams**: Remove stuck paper, check rollers, verify paper specs\n4. **Offline Status**: Ping printer IP, restart spooler service",
+    "tags": ["printer", "hardware", "installation", "troubleshooting"]
+  },
+  {
+    "id": "KB-004",
+    "title": "SharePoint Access and Permissions",
+    "category": "Software",
+    "content": "SharePoint access management:\n\n**Permission Levels**:\n- Full Control: Complete management\n- Edit: Add/edit/delete items\n- Contribute: Add items only\n- Read: View only\n\n**Troubleshooting Access Issues**:\n1. Verify user is in correct security group\n2. Check conditional access policies in Azure AD\n3. Clear browser cache and try incognito\n4. Check for site-specific permissions\n\n**Best Practices**:\n- Use groups, not individual permissions\n- Document permission changes\n- Regular access reviews quarterly",
+    "tags": ["sharepoint", "permissions", "access", "microsoft365"]
+  },
+  {
+    "id": "KB-005",
+    "title": "File Server Performance Optimization",
+    "category": "Hardware",
+    "content": "File server performance guide:\n\n**Symptoms of Issues**:\n- Slow file opening (>5 seconds for typical docs)\n- Timeouts accessing shares\n- High disk queue length\n\n**Resolution Steps**:\n1. Check disk health (SMART status, RAID status)\n2. Review antivirus exclusions for file types\n3. Analyze disk I/O patterns\n4. Consider SSD for frequently accessed data\n5. Check network bandwidth utilization\n\n**Preventive Measures**:\n- Regular defragmentation (HDD)\n- Disk space monitoring (alert at 80%)\n- Quarterly performance baseline",
+    "tags": ["file-server", "performance", "storage", "optimization"]
+  },
+  {
+    "id": "KB-006",
+    "title": "MFA Troubleshooting and Setup",
+    "category": "Security",
+    "content": "Multi-Factor Authentication guide:\n\n**Common Issues**:\n1. **Code Invalid**: Check device time sync (automatic time zone)\n2. **App Not Working**: Re-register authenticator app\n3. **Lost Device**: Use backup codes or admin reset\n4. **Verification Timeout**: Check network connectivity\n\n**Supported Methods** (in order of security):\n1. Hardware token (FIDO2)\n2. Authenticator app (Microsoft/Google)\n3. SMS (least secure, avoid if possible)\n\n**Admin Reset Procedure**:\n1. Verify user identity (2 forms of verification)\n2. Remove existing MFA methods\n3. Force re-registration at next login",
+    "tags": ["mfa", "authentication", "security", "azure-ad"]
+  },
+  {
+    "id": "KB-007",
+    "title": "Video Conferencing Quality Guide",
+    "category": "Network",
+    "content": "Optimizing video conference quality:\n\n**Minimum Requirements**:\n- Bandwidth: 2 Mbps up/down per participant\n- Latency: <150ms\n- Jitter: <30ms\n- Packet Loss: <1%\n\n**Troubleshooting Steps**:\n1. Test bandwidth (speedtest.net)\n2. Use wired connection if possible\n3. Close bandwidth-heavy applications\n4. Check QoS settings on network\n\n**Network Configuration**:\n- Prioritize real-time traffic (DSCP markings)\n- Configure proper NAT traversal\n- Whitelist video platform IPs",
+    "tags": ["video-conference", "zoom", "teams", "network", "qos"]
+  },
+  {
+    "id": "KB-008",
+    "title": "Backup and Recovery Procedures",
+    "category": "Software",
+    "content": "Backup management guide:\n\n**Backup Schedule**:\n- Full backup: Weekly (Sunday)\n- Incremental: Daily\n- Transaction logs: Hourly\n\n**Retention Policy**:\n- Daily backups: 7 days\n- Weekly backups: 4 weeks\n- Monthly backups: 12 months\n\n**Recovery Procedures**:\n1. Identify data/system to restore\n2. Select appropriate backup point\n3. Verify backup integrity before restore\n4. Document recovery actions\n\n**Common Issues**:\n- API key expiration: Rotate keys every 90 days\n- Storage full: Monitor and alert at 80%\n- Network timeout: Increase timeout settings",
+    "tags": ["backup", "recovery", "disaster-recovery", "data-protection"]
+  },
+  {
+    "id": "KB-009",
+    "title": "New User Onboarding Checklist",
+    "category": "Security",
+    "content": "New employee IT setup:\n\n**Pre-Start**:\n1. Create AD account with correct OU\n2. Add to security groups based on role\n3. Create mailbox and assign license\n4. Prepare workstation with standard image\n\n**First Day**:\n1. Account activation and password set\n2. MFA enrollment\n3. VPN setup if remote\n4. Software installation per role\n5. Security awareness training\n\n**Verification**:\n- Test all system access\n- Confirm email flow\n- Verify group memberships\n- Document any deviations",
+    "tags": ["onboarding", "new-user", "checklist", "active-directory"]
+  },
+  {
+    "id": "KB-010",
+    "title": "SSL Certificate Management",
+    "category": "Security",
+    "content": "Certificate lifecycle management:\n\n**Certificate Types**:\n- DV (Domain Validation): Basic, automated\n- OV (Organization Validation): Business identity\n- EV (Extended Validation): Highest trust, green bar\n\n**Renewal Process**:\n1. Monitor expiry (alert 30 days before)\n2. Generate CSR if needed\n3. Complete domain validation\n4. Install new certificate\n5. Test and verify chain\n\n**Troubleshooting**:\n- Chain incomplete: Install intermediate certs\n- Validation failed: Check DNS records\n- Auto-renewal failed: Verify API credentials\n\n**Best Practices**:\n- Use Let's Encrypt for automatic renewal\n- Maintain certificate inventory\n- Use short validity periods (90 days ideal)",
+    "tags": ["ssl", "certificate", "security", "https"]
+  },
+  {
+    "id": "KB-011",
+    "title": "Phishing and Social Engineering Response",
+    "category": "Security",
+    "content": "Handling suspected phishing:\n\n**Immediate Actions**:\n1. Do NOT click links or download attachments\n2. Report via phishing button in Outlook\n3. Forward original email to security team\n4. Do not reply to sender\n\n**If Credentials Were Entered**:\n1. Change password immediately\n2. Report to security team\n3. Monitor account for suspicious activity\n4. Enable additional MFA if not active\n\n**Red Flags**:\n- Urgent/threatening language\n- Sender mismatch (display vs actual)\n- Suspicious links (hover to preview)\n- Unusual requests (wire transfers, gift cards)\n\n**Escalation**: All executive-targeted phishing → Security team immediately",
+    "tags": ["phishing", "security", "email", "social-engineering"]
+  },
+  {
+    "id": "KB-012",
+    "title": "Outlook Common Issues",
+    "category": "Software",
+    "content": "Outlook troubleshooting guide:\n\n**Password Prompts**:\n1. Clear cached credentials (Credential Manager)\n2. Repair Office installation\n3. Create new Outlook profile\n4. Check for account connectivity issues\n\n**Slow Performance**:\n1. Archive old emails\n2. Disable unnecessary add-ins\n3. Reduce OST file size\n4. Repair OST file\n\n**Synchronization Issues**:\n1. Check Outlook connection status\n2. Verify Microsoft 365 service health\n3. Clear offline items and resync\n\n**Profile Corruption**:\n1. Create new profile\n2. Remove old profile\n3. Reconfigure accounts",
+    "tags": ["outlook", "email", "office365", "troubleshooting"]
+  }
+]

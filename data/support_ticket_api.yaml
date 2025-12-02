@@ -1,0 +1,438 @@
+openapi: 3.0.3
+info:
+  title: MSP Support Ticket API
+  description: |
+    API for managing support tickets in the MSP Support Assistant system.
+    This specification can be used with AWS Bedrock AgentCore Gateway to
+    automatically generate tool interfaces for the AI agent.
+  version: 1.0.0
+  contact:
+    name: Gianluca Formica
+    url: https://github.com/formicag/msp-support-assistant
+
+servers:
+  - url: https://{api-id}.execute-api.{region}.amazonaws.com
+    description: API Gateway endpoint
+    variables:
+      api-id:
+        default: "xxxxx"
+        description: API Gateway ID
+      region:
+        default: "us-east-1"
+        description: AWS Region
+
+paths:
+  /tickets:
+    post:
+      operationId: createTicket
+      summary: Create a new support ticket
+      description: |
+        Creates a new support ticket with the provided details.
+        Returns the created ticket with a generated ID.
+      tags:
+        - tickets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTicketRequest'
+      responses:
+        '201':
+          description: Ticket created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      operationId: listTickets
+      summary: List support tickets
+      description: |
+        Returns a list of support tickets with optional filtering.
+        Supports pagination via lastKey parameter.
+      tags:
+        - tickets
+      parameters:
+        - name: status
+          in: query
+          description: Filter by ticket status
+          schema:
+            type: string
+            enum: [Open, "In Progress", Resolved, Closed]
+        - name: customer_id
+          in: query
+          description: Filter by customer ID
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Maximum number of tickets to return
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: lastKey
+          in: query
+          description: Last ticket ID for pagination
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of tickets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketListResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /tickets/{ticketId}:
+    get:
+      operationId: getTicket
+      summary: Get a specific ticket
+      description: Returns the details of a specific support ticket by ID.
+      tags:
+        - tickets
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          description: Unique ticket identifier
+          schema:
+            type: string
+            example: TKT-20241202-A1B2C3D4
+      responses:
+        '200':
+          description: Ticket details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketResponse'
+        '404':
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    patch:
+      operationId: updateTicket
+      summary: Update a ticket
+      description: |
+        Updates an existing ticket's properties such as status, priority,
+        or adds a note. Only provided fields will be updated.
+      tags:
+        - tickets
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          description: Unique ticket identifier
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTicketRequest'
+      responses:
+        '200':
+          description: Ticket updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      operationId: deleteTicket
+      summary: Delete a ticket
+      description: Permanently deletes a support ticket.
+      tags:
+        - tickets
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          description: Unique ticket identifier
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Ticket deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Ticket TKT-123 deleted successfully
+        '404':
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /health:
+    get:
+      operationId: healthCheck
+      summary: Health check endpoint
+      description: Returns the health status of the API.
+      tags:
+        - system
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  service:
+                    type: string
+                    example: msp-support-assistant-ticket-api
+                  timestamp:
+                    type: string
+                    format: date-time
+
+components:
+  schemas:
+    CreateTicketRequest:
+      type: object
+      required:
+        - title
+        - description
+      properties:
+        title:
+          type: string
+          description: Brief summary of the issue
+          minLength: 5
+          maxLength: 200
+          example: VPN Connection Issues
+        description:
+          type: string
+          description: Detailed description of the problem
+          minLength: 10
+          maxLength: 5000
+          example: Users are experiencing intermittent VPN disconnections during video calls.
+        priority:
+          type: string
+          description: Ticket priority level
+          enum: [Low, Medium, High, Critical]
+          default: Medium
+        category:
+          type: string
+          description: Issue category
+          enum: [Network, Hardware, Software, Security, General]
+          default: General
+        customer_id:
+          type: string
+          description: Customer identifier
+          example: CUST-001
+        assigned_to:
+          type: string
+          description: Person assigned to handle the ticket
+          example: john.doe@example.com
+        tags:
+          type: array
+          description: Tags for categorization
+          items:
+            type: string
+          example: [vpn, network, urgent]
+
+    UpdateTicketRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          description: Updated title
+        description:
+          type: string
+          description: Updated description
+        status:
+          type: string
+          description: New ticket status
+          enum: [Open, "In Progress", Resolved, Closed]
+        priority:
+          type: string
+          description: Updated priority
+          enum: [Low, Medium, High, Critical]
+        assigned_to:
+          type: string
+          description: New assignee
+        category:
+          type: string
+          description: Updated category
+          enum: [Network, Hardware, Software, Security, General]
+        tags:
+          type: array
+          description: Updated tags
+          items:
+            type: string
+        note:
+          type: string
+          description: Note to add to the ticket
+          example: Contacted user for more information
+        author:
+          type: string
+          description: Author of the note
+          example: Support Agent
+
+    Ticket:
+      type: object
+      properties:
+        TicketId:
+          type: string
+          description: Unique ticket identifier
+          example: TKT-20241202-A1B2C3D4
+        Title:
+          type: string
+          description: Brief summary
+        Description:
+          type: string
+          description: Detailed description
+        Status:
+          type: string
+          enum: [Open, "In Progress", Resolved, Closed]
+        Priority:
+          type: string
+          enum: [Low, Medium, High, Critical]
+        Category:
+          type: string
+          enum: [Network, Hardware, Software, Security, General]
+        CustomerId:
+          type: string
+        AssignedTo:
+          type: string
+        Tags:
+          type: array
+          items:
+            type: string
+        Notes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Note'
+        CreatedAt:
+          type: string
+          format: date-time
+        UpdatedAt:
+          type: string
+          format: date-time
+
+    Note:
+      type: object
+      properties:
+        text:
+          type: string
+        author:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    TicketResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: Ticket created successfully
+        ticket:
+          $ref: '#/components/schemas/Ticket'
+
+    TicketListResponse:
+      type: object
+      properties:
+        tickets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Ticket'
+        count:
+          type: integer
+          description: Number of tickets returned
+        lastKey:
+          type: string
+          description: Pagination key for next page
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+          example: Ticket not found
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+    CognitoAuth:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://cognito-idp.{region}.amazonaws.com/{userPoolId}/oauth2/authorize
+          scopes:
+            openid: OpenID Connect
+            profile: User profile
+
+security:
+  - ApiKeyAuth: []
+  - CognitoAuth: [openid]
+
+tags:
+  - name: tickets
+    description: Support ticket operations
+  - name: system
+    description: System health and status

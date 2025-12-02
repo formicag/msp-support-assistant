@@ -1,0 +1,381 @@
+# =============================================================================
+# Deploy Pipeline - Infrastructure and Application Deployment
+# =============================================================================
+# Deploys to AWS using OIDC for secure authentication
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy to"
+        required: true
+        default: "demo"
+        type: choice
+        options:
+          - demo
+          - staging
+          - prod
+      action:
+        description: "Terraform action"
+        required: true
+        default: "apply"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+# Prevent concurrent deployments
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write  # Required for OIDC
+  contents: read
+  pull-requests: write
+
+env:
+  AWS_REGION: us-east-1
+  TERRAFORM_VERSION: "1.5.7"
+  TF_STATE_BUCKET: msp-support-assistant-tfstate
+  TF_STATE_KEY: terraform.tfstate
+  TF_LOCK_TABLE: msp-support-assistant-tflock
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Terraform Plan
+  # ---------------------------------------------------------------------------
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'demo' }}
+    outputs:
+      plan_exit_code: ${{ steps.plan.outputs.exitcode }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSession
+
+      - name: Verify AWS credentials
+        run: |
+          aws sts get-caller-identity
+          echo "Successfully authenticated to AWS"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ env.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ env.TF_STATE_KEY }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ env.TF_LOCK_TABLE }}" \
+            -backend-config="encrypt=true"
+        working-directory: terraform
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan \
+            -var="environment=${{ github.event.inputs.environment || 'demo' }}" \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -out=tfplan \
+            -detailed-exitcode || echo "exitcode=$?" >> $GITHUB_OUTPUT
+        working-directory: terraform
+        continue-on-error: true
+
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: terraform/tfplan
+          retention-days: 7
+
+      - name: Comment Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `#### Terraform Plan 📖
+
+            \`\`\`
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+
+            *Pushed by: @${{ github.actor }}*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+  # ---------------------------------------------------------------------------
+  # Terraform Apply (requires approval for main branch)
+  # ---------------------------------------------------------------------------
+  terraform-apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    if: |
+      github.ref == 'refs/heads/main' &&
+      (github.event.inputs.action == 'apply' || github.event.inputs.action == '')
+    environment:
+      name: ${{ github.event.inputs.environment || 'demo' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSession
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ env.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ env.TF_STATE_KEY }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ env.TF_LOCK_TABLE }}" \
+            -backend-config="encrypt=true"
+        working-directory: terraform
+
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan
+          path: terraform
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+        working-directory: terraform
+
+      - name: Get Terraform Outputs
+        id: tf-outputs
+        run: |
+          echo "api_gateway_endpoint=$(terraform output -raw api_gateway_endpoint)" >> $GITHUB_OUTPUT
+          echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
+          echo "streamlit_app_url=$(terraform output -raw streamlit_app_url)" >> $GITHUB_OUTPUT
+        working-directory: terraform
+
+    outputs:
+      api_gateway_endpoint: ${{ steps.tf-outputs.outputs.api_gateway_endpoint }}
+      ecr_repository_url: ${{ steps.tf-outputs.outputs.ecr_repository_url }}
+      streamlit_app_url: ${{ steps.tf-outputs.outputs.streamlit_app_url }}
+
+  # ---------------------------------------------------------------------------
+  # Build and Push Docker Images
+  # ---------------------------------------------------------------------------
+  build-push-images:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: terraform-apply
+    if: needs.terraform-apply.result == 'success'
+    environment: ${{ github.event.inputs.environment || 'demo' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSession
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Streamlit image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src/streamlit
+          push: true
+          tags: |
+            ${{ needs.terraform-apply.outputs.ecr_repository_url }}:latest
+            ${{ needs.terraform-apply.outputs.ecr_repository_url }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Deploy Lambda Function
+  # ---------------------------------------------------------------------------
+  deploy-lambda:
+    name: Deploy Lambda
+    runs-on: ubuntu-latest
+    needs: terraform-apply
+    if: needs.terraform-apply.result == 'success'
+    environment: ${{ github.event.inputs.environment || 'demo' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSession
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Package Lambda function
+        run: |
+          cd src/lambda
+          pip install -r requirements.txt -t .
+          zip -r ../../lambda.zip .
+
+      - name: Update Lambda function code
+        run: |
+          aws lambda update-function-code \
+            --function-name msp-support-assistant-${{ github.event.inputs.environment || 'demo' }}-ticket-api \
+            --zip-file fileb://lambda.zip
+
+  # ---------------------------------------------------------------------------
+  # Update App Runner Service
+  # ---------------------------------------------------------------------------
+  deploy-apprunner:
+    name: Deploy App Runner
+    runs-on: ubuntu-latest
+    needs: [terraform-apply, build-push-images]
+    if: needs.build-push-images.result == 'success'
+    environment: ${{ github.event.inputs.environment || 'demo' }}
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSession
+
+      - name: Trigger App Runner deployment
+        run: |
+          SERVICE_ARN=$(aws apprunner list-services --query "ServiceSummaryList[?ServiceName=='msp-support-assistant-${{ github.event.inputs.environment || 'demo' }}-streamlit'].ServiceArn" --output text)
+          if [ -n "$SERVICE_ARN" ]; then
+            aws apprunner start-deployment --service-arn $SERVICE_ARN
+            echo "Deployment triggered for service: $SERVICE_ARN"
+          else
+            echo "App Runner service not found"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Post-Deployment Verification
+  # ---------------------------------------------------------------------------
+  verify-deployment:
+    name: Verify Deployment
+    runs-on: ubuntu-latest
+    needs: [deploy-lambda, deploy-apprunner]
+    if: always() && needs.deploy-lambda.result == 'success'
+    environment: ${{ github.event.inputs.environment || 'demo' }}
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSession
+
+      - name: Get API Gateway endpoint
+        id: get-endpoint
+        run: |
+          ENDPOINT=$(aws ssm get-parameter --name "/msp-support-assistant/${{ github.event.inputs.environment || 'demo' }}/api-gateway-endpoint" --query "Parameter.Value" --output text)
+          echo "endpoint=$ENDPOINT" >> $GITHUB_OUTPUT
+
+      - name: Health check - API
+        run: |
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${{ steps.get-endpoint.outputs.endpoint }}/health" || echo "000")
+          if [ "$RESPONSE" = "200" ]; then
+            echo "API health check passed"
+          else
+            echo "API health check failed with status: $RESPONSE"
+            exit 1
+          fi
+
+      - name: Deployment Summary
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ github.event.inputs.environment || 'demo' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **API Endpoint:** ${{ steps.get-endpoint.outputs.endpoint }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+
+  # ---------------------------------------------------------------------------
+  # Terraform Destroy (manual trigger only)
+  # ---------------------------------------------------------------------------
+  terraform-destroy:
+    name: Terraform Destroy
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'destroy'
+    environment:
+      name: ${{ github.event.inputs.environment || 'demo' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSession
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ env.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ env.TF_STATE_KEY }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ env.TF_LOCK_TABLE }}" \
+            -backend-config="encrypt=true"
+        working-directory: terraform
+
+      - name: Terraform Destroy
+        run: |
+          terraform destroy \
+            -var="environment=${{ github.event.inputs.environment || 'demo' }}" \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -auto-approve
+        working-directory: terraform

@@ -1,0 +1,152 @@
+[
+  {
+    "id": "TKT-20240101-SAMPLE01",
+    "title": "VPN Connection Dropping Intermittently",
+    "description": "Users are experiencing frequent VPN disconnections, especially during video calls. The issue started after the network maintenance last weekend. Affects approximately 30 users across the sales department.",
+    "category": "Network",
+    "priority": "High",
+    "status": "Resolved",
+    "resolution": "Identified MTU mismatch between VPN concentrator and ISP. Adjusted MTU from 1500 to 1400 on the VPN configuration. Also implemented split tunneling for video conferencing traffic.",
+    "tags": ["vpn", "network", "connectivity", "video-calls"]
+  },
+  {
+    "id": "TKT-20240102-SAMPLE02",
+    "title": "Email Delivery Delays to External Recipients",
+    "description": "Multiple users reporting 4-6 hour delays when sending emails to external domains. Internal emails are working fine. Started noticing the issue 3 days ago.",
+    "category": "Software",
+    "priority": "High",
+    "status": "Resolved",
+    "resolution": "Exchange server mail queue was backing up due to a misconfigured spam filter rule that was causing excessive scanning. Removed the problematic rule and cleared the queue. Implemented proper rate limiting.",
+    "tags": ["email", "exchange", "delays", "mail-flow"]
+  },
+  {
+    "id": "TKT-20240103-SAMPLE03",
+    "title": "Printer Not Recognized After Windows Update",
+    "description": "After the latest Windows update, the HP LaserJet Pro in the accounting department is not being recognized. Driver shows as installed but print jobs fail silently.",
+    "category": "Hardware",
+    "priority": "Medium",
+    "status": "Resolved",
+    "resolution": "Windows update replaced the HP Universal Print Driver with a generic driver. Reinstalled the HP-specific driver and cleared the print spooler. Added driver to Windows Update exclusion list.",
+    "tags": ["printer", "windows-update", "driver", "hp"]
+  },
+  {
+    "id": "TKT-20240104-SAMPLE04",
+    "title": "Unable to Access SharePoint Site",
+    "description": "Marketing team cannot access the project SharePoint site. Getting '403 Forbidden' error. They had access yesterday and no permission changes were made.",
+    "category": "Software",
+    "priority": "High",
+    "status": "Resolved",
+    "resolution": "Azure AD conditional access policy was updated and inadvertently blocked the marketing group. Corrected the policy to include the marketing security group. Users regained access immediately.",
+    "tags": ["sharepoint", "permissions", "azure-ad", "access-denied"]
+  },
+  {
+    "id": "TKT-20240105-SAMPLE05",
+    "title": "Slow Performance on File Server",
+    "description": "Users reporting slow file access on the main file server. Opening large Excel files taking 2-3 minutes instead of seconds. Issue seems worse in the morning.",
+    "category": "Hardware",
+    "priority": "Critical",
+    "status": "Resolved",
+    "resolution": "Identified failing disk in RAID array causing degraded performance. Replaced the disk and rebuilt the array. Also discovered antivirus was scanning network shares excessively - added exclusions for known file types.",
+    "tags": ["file-server", "performance", "storage", "raid"]
+  },
+  {
+    "id": "TKT-20240106-SAMPLE06",
+    "title": "Multi-Factor Authentication Not Working",
+    "description": "Several users in the finance department unable to complete MFA verification. App shows code but system rejects it as invalid. Affects 5 users.",
+    "category": "Security",
+    "priority": "Critical",
+    "status": "Resolved",
+    "resolution": "Time synchronization issue on users' mobile devices. The authenticator app codes were out of sync. Guided users through app reconfiguration and ensured automatic time sync was enabled on devices.",
+    "tags": ["mfa", "authentication", "security", "mobile"]
+  },
+  {
+    "id": "TKT-20240107-SAMPLE07",
+    "title": "Zoom Meetings Showing Poor Quality",
+    "description": "Video quality degrading significantly during Zoom meetings. Users experiencing pixelation and audio dropouts. Issue affects conference rooms more than individual desktops.",
+    "category": "Network",
+    "priority": "Medium",
+    "status": "Resolved",
+    "resolution": "QoS was not properly configured for video traffic on conference room network segment. Implemented proper QoS policies prioritizing real-time traffic. Also upgraded conference room network switches to PoE+ models.",
+    "tags": ["zoom", "video-conference", "qos", "network"]
+  },
+  {
+    "id": "TKT-20240108-SAMPLE08",
+    "title": "Backup Job Failing Every Night",
+    "description": "Nightly backup to cloud storage has been failing for the past week. Error message mentions 'insufficient permissions'. No changes were made to backup configuration.",
+    "category": "Software",
+    "priority": "Critical",
+    "status": "Resolved",
+    "resolution": "Cloud storage API key had expired. Generated new API key and updated backup software configuration. Implemented monitoring alerts for key expiration (30 days before).",
+    "tags": ["backup", "cloud", "api", "permissions"]
+  },
+  {
+    "id": "TKT-20240109-SAMPLE09",
+    "title": "New Employee Cannot Log Into Domain",
+    "description": "New hire in HR department cannot log into any domain workstation. Account was created yesterday following standard procedure. Password reset attempted twice.",
+    "category": "Security",
+    "priority": "Medium",
+    "status": "Resolved",
+    "resolution": "Account was created but not added to any security groups. User lacked basic 'Domain Users' membership. Added user to appropriate groups and also discovered OU inheritance was blocked - fixed GPO linkage.",
+    "tags": ["active-directory", "new-user", "login", "permissions"]
+  },
+  {
+    "id": "TKT-20240110-SAMPLE10",
+    "title": "Website SSL Certificate Expired",
+    "description": "Company website showing 'Not Secure' warning in browsers. Customers reporting they cannot complete purchases due to security warnings.",
+    "category": "Security",
+    "priority": "Critical",
+    "status": "Resolved",
+    "resolution": "SSL certificate expired and auto-renewal failed due to DNS validation issue. Manually renewed certificate and fixed DNS TXT record for future auto-renewals. Implemented certificate expiry monitoring.",
+    "tags": ["ssl", "certificate", "website", "security"]
+  },
+  {
+    "id": "TKT-20240111-SAMPLE11",
+    "title": "Outlook Keeps Asking for Password",
+    "description": "Multiple users experiencing Outlook constantly prompting for password. After entering credentials, it works for a few minutes then prompts again.",
+    "category": "Software",
+    "priority": "High",
+    "status": "Open",
+    "resolution": null,
+    "tags": ["outlook", "password", "authentication", "office365"]
+  },
+  {
+    "id": "TKT-20240112-SAMPLE12",
+    "title": "Cannot Connect to WiFi in Building B",
+    "description": "Entire Building B reporting WiFi connectivity issues. Access points appear online but devices fail to obtain IP address. Issue started this morning.",
+    "category": "Network",
+    "priority": "Critical",
+    "status": "In Progress",
+    "resolution": null,
+    "tags": ["wifi", "dhcp", "network", "access-point"]
+  },
+  {
+    "id": "TKT-20240113-SAMPLE13",
+    "title": "Application Crashes When Generating Reports",
+    "description": "Internal inventory application crashes consistently when users try to generate monthly reports. Error code: 0x80004005. Works fine for smaller date ranges.",
+    "category": "Software",
+    "priority": "Medium",
+    "status": "Open",
+    "resolution": null,
+    "tags": ["application", "crash", "reports", "memory"]
+  },
+  {
+    "id": "TKT-20240114-SAMPLE14",
+    "title": "Request for Additional Monitor",
+    "description": "Developer in engineering team requesting a third monitor for their workstation to improve productivity. Manager has approved the purchase.",
+    "category": "Hardware",
+    "priority": "Low",
+    "status": "Open",
+    "resolution": null,
+    "tags": ["hardware-request", "monitor", "workstation"]
+  },
+  {
+    "id": "TKT-20240115-SAMPLE15",
+    "title": "Suspicious Emails Received by Executives",
+    "description": "Three executives received emails appearing to be from the CEO requesting wire transfers. Emails look legitimate but came from external domain. Possible spear phishing attack.",
+    "category": "Security",
+    "priority": "Critical",
+    "status": "In Progress",
+    "resolution": null,
+    "tags": ["phishing", "security", "email", "executive"]
+  }
+]
