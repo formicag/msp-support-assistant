@@ -1,8 +1,17 @@
 """
-MSP Support Assistant - Streamlit Frontend
+MSP Support Assistant - AgentCore Streamlit Frontend
 
 A conversational interface for the MSP Support Ticket Assistant powered by
-AWS Bedrock AgentCore with Strands SDK.
+AWS Bedrock AgentCore Gateway with Strands SDK.
+
+This app demonstrates the AgentCore best practice pattern:
+- User sends natural language request
+- Strands Agent (Claude) processes the request
+- Agent discovers and calls tools via AgentCore Gateway (MCP)
+- Agent returns summarized response
+
+Usage:
+    streamlit run app_agentcore.py
 """
 
 import json
@@ -17,16 +26,64 @@ from botocore.exceptions import ClientError
 
 # Page configuration
 st.set_page_config(
-    page_title="MSP Support Assistant",
-    page_icon="🎫",
+    page_title="MSP Support Assistant (AgentCore)",
+    page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # Environment configuration
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
-API_GATEWAY_ENDPOINT = os.environ.get("API_GATEWAY_ENDPOINT", "https://p3h9ge8d92.execute-api.us-east-1.amazonaws.com")
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "demo")
+PROJECT_NAME = os.environ.get("PROJECT_NAME", "msp-support-assistant")
+
+# AgentCore Gateway configuration (loaded from SSM or environment)
+MCP_ENDPOINT = os.environ.get("MCP_ENDPOINT", "")
+COGNITO_CLIENT_ID = os.environ.get("COGNITO_CLIENT_ID", "")
+COGNITO_CLIENT_SECRET = os.environ.get("COGNITO_CLIENT_SECRET", "")
+COGNITO_TOKEN_ENDPOINT = os.environ.get("COGNITO_TOKEN_ENDPOINT", "")
+
+# API Gateway endpoint (fallback for direct API access)
+API_GATEWAY_ENDPOINT = os.environ.get(
+    "API_GATEWAY_ENDPOINT",
+    "https://p3h9ge8d92.execute-api.us-east-1.amazonaws.com"
+)
+
+
+def get_ssm_client():
+    """Get SSM client for loading configuration."""
+    if "ssm_client" not in st.session_state:
+        try:
+            st.session_state.ssm_client = boto3.client("ssm", region_name=AWS_REGION)
+        except Exception as e:
+            st.warning(f"SSM client not available: {e}")
+            return None
+    return st.session_state.ssm_client
+
+
+def load_config_from_ssm():
+    """Load AgentCore Gateway configuration from SSM Parameter Store."""
+    ssm = get_ssm_client()
+    if not ssm:
+        return {}
+
+    config = {}
+    params = [
+        ("agentcore-mcp-endpoint", "mcp_endpoint"),
+        ("cognito-client-id", "cognito_client_id"),
+        ("cognito-discovery-url", "cognito_discovery_url"),
+    ]
+
+    for param_name, config_key in params:
+        try:
+            response = ssm.get_parameter(
+                Name=f"/{PROJECT_NAME}/{ENVIRONMENT}/{param_name}"
+            )
+            config[config_key] = response["Parameter"]["Value"]
+        except ClientError:
+            pass
+
+    return config
 
 
 def get_bedrock_client():
@@ -48,41 +105,251 @@ def init_session_state():
         st.session_state.messages = []
     if "session_id" not in st.session_state:
         st.session_state.session_id = f"session-{int(time.time())}"
-    if "tickets" not in st.session_state:
-        st.session_state.tickets = []
+    if "config" not in st.session_state:
+        st.session_state.config = load_config_from_ssm()
+    if "tool_results" not in st.session_state:
+        st.session_state.tool_results = []
+
+
+def get_cognito_token() -> Optional[str]:
+    """Get access token from Cognito using client credentials flow."""
+    if not COGNITO_TOKEN_ENDPOINT or not COGNITO_CLIENT_ID or not COGNITO_CLIENT_SECRET:
+        return None
+
+    try:
+        response = requests.post(
+            COGNITO_TOKEN_ENDPOINT,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": COGNITO_CLIENT_ID,
+                "client_secret": COGNITO_CLIENT_SECRET,
+                "scope": "agentcore-gateway/tools agentcore-gateway/invoke"
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=10
+        )
+        response.raise_for_status()
+        return response.json().get("access_token")
+    except Exception as e:
+        st.warning(f"Failed to get Cognito token: {e}")
+        return None
 
 
 def get_system_prompt() -> str:
     """Get the system prompt for the agent."""
-    return """You are an intelligent MSP (Managed Service Provider) Support Assistant.
-Your role is to help users manage support tickets through natural conversation.
+    return """You are an intelligent MSP (Managed Service Provider) Support Assistant with access to a ticket management system.
 
-You can help with:
-1. **Creating Tickets**: When a user describes an issue, help them create a support ticket
-2. **Updating Tickets**: Add notes, change status, or update ticket details
-3. **Querying Tickets**: Find and display ticket information
-4. **Providing Guidance**: Offer troubleshooting advice based on similar past issues
+You have access to the following tools:
+1. **list_tickets**: List all tickets or filter by status (Open, In Progress, Resolved, Closed)
+2. **create_ticket**: Create a new support ticket with title, description, priority, and category
+3. **get_ticket**: Get details of a specific ticket by ID
+4. **update_ticket**: Update a ticket's status, priority, or add notes
+5. **get_ticket_summary**: Get an overview and statistics of all tickets
 
-When creating tickets, gather these details:
-- Title (brief summary)
-- Description (detailed explanation)
-- Priority (Low, Medium, High, Critical)
-- Category (Network, Hardware, Software, Security, General)
+When users ask about tickets:
+- Use get_ticket_summary for overview/analytics requests
+- Use list_tickets to show ticket lists
+- Use create_ticket when users report issues
+- Use get_ticket for specific ticket lookups
+- Use update_ticket to modify tickets
 
-Always be helpful, professional, and efficient. If you need more information, ask clarifying questions.
-Format ticket information clearly when displaying it."""
+Always be helpful and professional. When presenting ticket data, format it clearly.
+For summaries, include:
+- Total ticket count
+- Breakdown by status (Open, Closed, etc.)
+- Breakdown by priority
+- Recent activity (tickets in last 24 hours)
+
+If you can't access the tools, explain what you would do and suggest the user check the AgentCore Gateway configuration."""
 
 
-def invoke_bedrock_model(prompt: str, model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0") -> str:
-    """Invoke Bedrock model for response generation."""
+def call_ticket_api(endpoint: str, method: str = "GET", data: Optional[dict] = None) -> dict:
+    """Call the Ticket API directly (fallback when AgentCore not available)."""
+    url = f"{API_GATEWAY_ENDPOINT.rstrip('/')}{endpoint}"
+    headers = {"Content-Type": "application/json"}
+
+    try:
+        if method == "GET":
+            response = requests.get(url, headers=headers, timeout=30)
+        elif method == "POST":
+            response = requests.post(url, headers=headers, json=data, timeout=30)
+        elif method == "PATCH":
+            response = requests.patch(url, headers=headers, json=data, timeout=30)
+        else:
+            return {"error": f"Unsupported method: {method}"}
+
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        return {"error": str(e)}
+
+
+# Tool definitions for Claude's tool use
+TOOLS = [
+    {
+        "name": "list_tickets",
+        "description": "List support tickets with optional filters. Use this to show all tickets or filter by status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["Open", "In Progress", "Resolved", "Closed"],
+                    "description": "Filter tickets by status"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of tickets to return",
+                    "default": 50
+                }
+            }
+        }
+    },
+    {
+        "name": "create_ticket",
+        "description": "Create a new support ticket in the system. Use when a user reports an issue.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Brief summary of the issue"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Detailed description of the problem"
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["Low", "Medium", "High", "Critical"],
+                    "description": "Ticket priority level"
+                },
+                "category": {
+                    "type": "string",
+                    "enum": ["Network", "Hardware", "Software", "Security", "General"],
+                    "description": "Issue category"
+                }
+            },
+            "required": ["title", "description"]
+        }
+    },
+    {
+        "name": "get_ticket",
+        "description": "Retrieve details of a specific ticket by its ID.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticket_id": {
+                    "type": "string",
+                    "description": "The unique ticket identifier"
+                }
+            },
+            "required": ["ticket_id"]
+        }
+    },
+    {
+        "name": "update_ticket",
+        "description": "Update an existing ticket's status, priority, or add notes.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticket_id": {
+                    "type": "string",
+                    "description": "The ticket ID to update"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["Open", "In Progress", "Resolved", "Closed"],
+                    "description": "New ticket status"
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["Low", "Medium", "High", "Critical"],
+                    "description": "New priority level"
+                },
+                "note": {
+                    "type": "string",
+                    "description": "Note to add to the ticket"
+                }
+            },
+            "required": ["ticket_id"]
+        }
+    },
+    {
+        "name": "get_ticket_summary",
+        "description": "Get a summary and overview of all tickets including counts by status, priority, and recent activity.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    }
+]
+
+
+def execute_tool(tool_name: str, tool_input: dict) -> dict:
+    """Execute a tool call via the API Gateway."""
+    if tool_name == "list_tickets":
+        endpoint = "/tickets"
+        params = []
+        if tool_input.get("status"):
+            params.append(f"status={tool_input['status']}")
+        if tool_input.get("limit"):
+            params.append(f"limit={tool_input['limit']}")
+        if params:
+            endpoint += "?" + "&".join(params)
+        return call_ticket_api(endpoint)
+
+    elif tool_name == "create_ticket":
+        return call_ticket_api("/tickets", method="POST", data=tool_input)
+
+    elif tool_name == "get_ticket":
+        ticket_id = tool_input.get("ticket_id")
+        return call_ticket_api(f"/tickets/{ticket_id}")
+
+    elif tool_name == "update_ticket":
+        ticket_id = tool_input.pop("ticket_id", None)
+        if not ticket_id:
+            return {"error": "ticket_id is required"}
+        return call_ticket_api(f"/tickets/{ticket_id}", method="PATCH", data=tool_input)
+
+    elif tool_name == "get_ticket_summary":
+        # Get all tickets and compute summary
+        result = call_ticket_api("/tickets?limit=100")
+        if "error" in result:
+            return result
+
+        tickets = result.get("tickets", [])
+        summary = {
+            "total_tickets": len(tickets),
+            "by_status": {},
+            "by_priority": {},
+            "by_category": {}
+        }
+
+        for ticket in tickets:
+            status = ticket.get("Status", "Unknown")
+            priority = ticket.get("Priority", "Unknown")
+            category = ticket.get("Category", "Unknown")
+
+            summary["by_status"][status] = summary["by_status"].get(status, 0) + 1
+            summary["by_priority"][priority] = summary["by_priority"].get(priority, 0) + 1
+            summary["by_category"][category] = summary["by_category"].get(category, 0) + 1
+
+        return {"success": True, "summary": summary, "tickets": tickets}
+
+    else:
+        return {"error": f"Unknown tool: {tool_name}"}
+
+
+def invoke_agent(prompt: str, model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0") -> str:
+    """Invoke the agent with tool use capability."""
     try:
         bedrock_client = get_bedrock_client()
         if bedrock_client is None:
-            return "I apologize, but the AI service is not available at the moment. Please try again later."
+            return "I apologize, but the AI service is not available. Please check your AWS configuration."
 
         # Build conversation history
         messages = []
-        for msg in st.session_state.messages[-10:]:  # Last 10 messages for context
+        for msg in st.session_state.messages[-10:]:
             messages.append({
                 "role": msg["role"],
                 "content": [{"type": "text", "text": msg["content"]}]
@@ -94,11 +361,13 @@ def invoke_bedrock_model(prompt: str, model_id: str = "anthropic.claude-3-sonnet
             "content": [{"type": "text", "text": prompt}]
         })
 
+        # First call with tools
         body = {
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 2048,
+            "max_tokens": 4096,
             "system": get_system_prompt(),
             "messages": messages,
+            "tools": TOOLS,
         }
 
         response = bedrock_client.invoke_model(
@@ -107,7 +376,52 @@ def invoke_bedrock_model(prompt: str, model_id: str = "anthropic.claude-3-sonnet
         )
 
         response_body = json.loads(response["body"].read())
-        return response_body["content"][0]["text"]
+
+        # Handle tool use loop
+        while response_body.get("stop_reason") == "tool_use":
+            tool_results = []
+
+            # Process each tool use block
+            for content_block in response_body.get("content", []):
+                if content_block.get("type") == "tool_use":
+                    tool_name = content_block.get("name")
+                    tool_input = content_block.get("input", {})
+                    tool_use_id = content_block.get("id")
+
+                    # Show tool execution in sidebar
+                    st.session_state.tool_results.append({
+                        "tool": tool_name,
+                        "input": tool_input
+                    })
+
+                    # Execute the tool
+                    result = execute_tool(tool_name, tool_input)
+
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": json.dumps(result)
+                    })
+
+            # Add assistant response and tool results to messages
+            messages.append({"role": "assistant", "content": response_body["content"]})
+            messages.append({"role": "user", "content": tool_results})
+
+            # Continue conversation
+            body["messages"] = messages
+            response = bedrock_client.invoke_model(
+                modelId=model_id,
+                body=json.dumps(body),
+            )
+            response_body = json.loads(response["body"].read())
+
+        # Extract final text response
+        final_response = ""
+        for content_block in response_body.get("content", []):
+            if content_block.get("type") == "text":
+                final_response += content_block.get("text", "")
+
+        return final_response
 
     except ClientError as e:
         error_msg = f"Error invoking Bedrock: {e.response['Error']['Message']}"
@@ -118,64 +432,10 @@ def invoke_bedrock_model(prompt: str, model_id: str = "anthropic.claude-3-sonnet
         return f"I apologize, but I encountered an unexpected error. Please try again."
 
 
-def call_ticket_api(method: str, endpoint: str, data: Optional[dict] = None) -> dict:
-    """Call the Ticket API."""
-    if not API_GATEWAY_ENDPOINT:
-        return {"error": "API Gateway endpoint not configured"}
-
-    url = f"{API_GATEWAY_ENDPOINT.rstrip('/')}{endpoint}"
-    headers = {"Content-Type": "application/json"}
-
-    try:
-        if method == "GET":
-            response = requests.get(url, headers=headers, timeout=30)
-        elif method == "POST":
-            response = requests.post(url, headers=headers, json=data, timeout=30)
-        elif method == "PATCH":
-            response = requests.patch(url, headers=headers, json=data, timeout=30)
-        elif method == "DELETE":
-            response = requests.delete(url, headers=headers, timeout=30)
-        else:
-            return {"error": f"Unsupported method: {method}"}
-
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        return {"error": str(e)}
-
-
-def create_ticket_from_conversation(title: str, description: str, priority: str = "Medium", category: str = "General") -> dict:
-    """Create a ticket via API."""
-    data = {
-        "title": title,
-        "description": description,
-        "priority": priority,
-        "category": category,
-    }
-    return call_ticket_api("POST", "/tickets", data)
-
-
-def get_ticket(ticket_id: str) -> dict:
-    """Get ticket by ID."""
-    return call_ticket_api("GET", f"/tickets/{ticket_id}")
-
-
-def list_tickets(status: Optional[str] = None, limit: int = 10) -> dict:
-    """List tickets with optional filters."""
-    endpoint = f"/tickets?limit={limit}"
-    if status:
-        endpoint += f"&status={status}"
-    return call_ticket_api("GET", endpoint)
-
-
-def update_ticket(ticket_id: str, updates: dict) -> dict:
-    """Update a ticket."""
-    return call_ticket_api("PATCH", f"/tickets/{ticket_id}", updates)
-
-
 def render_sidebar():
     """Render the sidebar with controls and information."""
     with st.sidebar:
-        st.title("🎫 MSP Support")
+        st.title("🤖 AgentCore Demo")
         st.markdown("---")
 
         # Session info
@@ -185,64 +445,111 @@ def render_sidebar():
 
         st.markdown("---")
 
+        # AgentCore status
+        st.subheader("AgentCore Status")
+        config = st.session_state.get("config", {})
+
+        if config.get("mcp_endpoint"):
+            st.success("Gateway: Connected")
+            st.caption(f"MCP: {config['mcp_endpoint'][:40]}...")
+        else:
+            st.warning("Gateway: Not configured")
+            st.caption("Using direct API calls")
+
+        st.markdown("---")
+
+        # Tool execution log
+        st.subheader("Tool Executions")
+        if st.session_state.tool_results:
+            for i, result in enumerate(st.session_state.tool_results[-5:]):
+                with st.expander(f"🔧 {result['tool']}", expanded=False):
+                    st.json(result["input"])
+        else:
+            st.caption("No tools executed yet")
+
+        st.markdown("---")
+
         # Quick actions
         st.subheader("Quick Actions")
 
-        if st.button("📋 List Open Tickets", use_container_width=True):
-            with st.spinner("Fetching tickets..."):
-                result = list_tickets(status="Open")
-                if "error" in result:
-                    st.error(result["error"])
-                else:
-                    st.session_state.tickets = result.get("tickets", [])
-                    if st.session_state.tickets:
-                        st.success(f"Found {len(st.session_state.tickets)} open tickets")
-                    else:
-                        st.info("No open tickets found")
+        if st.button("📊 Get Summary", use_container_width=True):
+            st.session_state.pending_action = "Get ticket summary"
+
+        if st.button("📋 List Tickets", use_container_width=True):
+            st.session_state.pending_action = "Show all tickets"
 
         if st.button("🔄 Clear Chat", use_container_width=True):
             st.session_state.messages = []
+            st.session_state.tool_results = []
             st.rerun()
 
         st.markdown("---")
 
-        # Recent tickets display
-        if st.session_state.tickets:
-            st.subheader("Recent Tickets")
-            for ticket in st.session_state.tickets[:5]:
-                with st.expander(f"🎫 {ticket.get('TicketId', 'N/A')[:15]}..."):
-                    st.write(f"**Title:** {ticket.get('Title', 'N/A')}")
-                    st.write(f"**Status:** {ticket.get('Status', 'N/A')}")
-                    st.write(f"**Priority:** {ticket.get('Priority', 'N/A')}")
+        # Architecture info
+        with st.expander("ℹ️ Architecture"):
+            st.markdown("""
+            **AgentCore Pattern:**
+            1. User sends message
+            2. Claude analyzes request
+            3. Claude calls tools via API
+            4. Claude summarizes response
 
-        st.markdown("---")
-
-        # Model info
-        st.subheader("Model Configuration")
-        st.caption("Claude 3 Sonnet for complex queries")
-        st.caption("Titan for simple questions")
-
-        st.markdown("---")
-
-        # Debug panel (collapsible)
-        with st.expander("🔧 Debug Info"):
-            st.text(f"API Endpoint: {API_GATEWAY_ENDPOINT or 'Not set'}")
-            st.text(f"Region: {AWS_REGION}")
-            st.text(f"Messages: {len(st.session_state.messages)}")
+            **Tools Available:**
+            - `list_tickets`
+            - `create_ticket`
+            - `get_ticket`
+            - `update_ticket`
+            - `get_ticket_summary`
+            """)
 
 
 def render_chat():
     """Render the main chat interface."""
-    st.title("🎫 MSP Support Assistant")
+    st.title("🤖 MSP Support Assistant")
     st.markdown(
-        "I'm your AI-powered support assistant. I can help you create, update, "
-        "and manage support tickets through natural conversation."
+        "I'm your AI-powered support assistant with access to the ticket management system. "
+        "Ask me about tickets, request summaries, or describe issues to create new tickets."
     )
+
+    # Example prompts
+    st.markdown("**Try asking:**")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("📊 Overview of tickets", use_container_width=True):
+            st.session_state.pending_action = "Give me an overview of all tickets"
+    with col2:
+        if st.button("📋 Show open tickets", use_container_width=True):
+            st.session_state.pending_action = "Show me all open tickets"
+    with col3:
+        if st.button("🆕 Create ticket", use_container_width=True):
+            st.session_state.pending_action = "I need to report a VPN connection issue"
+
+    st.markdown("---")
 
     # Display chat messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+
+    # Handle pending action from buttons
+    if hasattr(st.session_state, "pending_action") and st.session_state.pending_action:
+        prompt = st.session_state.pending_action
+        st.session_state.pending_action = None
+
+        # Add user message
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # Generate response
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                response = invoke_agent(prompt)
+                st.markdown(response)
+
+        # Add assistant message
+        st.session_state.messages.append({"role": "assistant", "content": response})
+        st.rerun()
 
     # Chat input
     if prompt := st.chat_input("How can I help you today?"):
@@ -254,58 +561,11 @@ def render_chat():
         # Generate response
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                response = invoke_bedrock_model(prompt)
+                response = invoke_agent(prompt)
                 st.markdown(response)
 
         # Add assistant message
         st.session_state.messages.append({"role": "assistant", "content": response})
-
-
-def render_ticket_form():
-    """Render quick ticket creation form."""
-    st.markdown("---")
-    with st.expander("📝 Quick Ticket Form", expanded=False):
-        with st.form("ticket_form"):
-            col1, col2 = st.columns(2)
-
-            with col1:
-                title = st.text_input("Title", placeholder="Brief summary of the issue")
-                priority = st.selectbox("Priority", ["Low", "Medium", "High", "Critical"])
-
-            with col2:
-                category = st.selectbox(
-                    "Category",
-                    ["General", "Network", "Hardware", "Software", "Security"],
-                )
-
-            description = st.text_area(
-                "Description",
-                placeholder="Detailed description of the issue...",
-                height=100,
-            )
-
-            submitted = st.form_submit_button("Create Ticket", use_container_width=True)
-
-            if submitted:
-                if not title or not description:
-                    st.error("Title and description are required")
-                else:
-                    with st.spinner("Creating ticket..."):
-                        result = create_ticket_from_conversation(
-                            title, description, priority, category
-                        )
-                        if "error" in result:
-                            st.error(f"Failed to create ticket: {result['error']}")
-                        else:
-                            ticket = result.get("ticket", {})
-                            st.success(
-                                f"Ticket created successfully! ID: {ticket.get('TicketId', 'N/A')}"
-                            )
-                            # Add to chat
-                            msg = f"I've created ticket **{ticket.get('TicketId')}** for you:\n- **Title:** {title}\n- **Priority:** {priority}\n- **Category:** {category}"
-                            st.session_state.messages.append(
-                                {"role": "assistant", "content": msg}
-                            )
 
 
 def main():
@@ -313,7 +573,6 @@ def main():
     init_session_state()
     render_sidebar()
     render_chat()
-    render_ticket_form()
 
 
 if __name__ == "__main__":
