@@ -2,16 +2,16 @@
 MSP Support Assistant - AgentCore Streamlit Frontend
 
 A conversational interface for the MSP Support Ticket Assistant powered by
-AWS Bedrock AgentCore Gateway with Strands SDK.
+AWS Bedrock with Amazon Nova Pro.
 
 This app demonstrates the AgentCore best practice pattern:
 - User sends natural language request
-- Strands Agent (Claude) processes the request
-- Agent discovers and calls tools via AgentCore Gateway (MCP)
+- Amazon Nova Pro processes the request with tool use
+- Agent calls tools via API Gateway
 - Agent returns summarized response
 
 Usage:
-    streamlit run app_agentcore.py
+    streamlit run app.py
 """
 
 import json
@@ -196,103 +196,122 @@ def call_ticket_api(endpoint: str, method: str = "GET", data: Optional[dict] = N
         return {"error": str(e)}
 
 
-# Tool definitions for Claude's tool use
+# Tool definitions for Bedrock Converse API (Amazon Nova Pro)
 TOOLS = [
     {
-        "name": "list_tickets",
-        "description": "List support tickets with optional filters. Use this to show all tickets or filter by status.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "type": "string",
-                    "enum": ["Open", "In Progress", "Resolved", "Closed"],
-                    "description": "Filter tickets by status"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of tickets to return",
-                    "default": 50
+        "toolSpec": {
+            "name": "list_tickets",
+            "description": "List support tickets with optional filters. Use this to show all tickets or filter by status.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "status": {
+                            "type": "string",
+                            "enum": ["Open", "In Progress", "Resolved", "Closed"],
+                            "description": "Filter tickets by status"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of tickets to return"
+                        }
+                    }
                 }
             }
         }
     },
     {
-        "name": "create_ticket",
-        "description": "Create a new support ticket in the system. Use when a user reports an issue.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "title": {
-                    "type": "string",
-                    "description": "Brief summary of the issue"
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Detailed description of the problem"
-                },
-                "priority": {
-                    "type": "string",
-                    "enum": ["Low", "Medium", "High", "Critical"],
-                    "description": "Ticket priority level"
-                },
-                "category": {
-                    "type": "string",
-                    "enum": ["Network", "Hardware", "Software", "Security", "General"],
-                    "description": "Issue category"
+        "toolSpec": {
+            "name": "create_ticket",
+            "description": "Create a new support ticket in the system. Use when a user reports an issue.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Brief summary of the issue"
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Detailed description of the problem"
+                        },
+                        "priority": {
+                            "type": "string",
+                            "enum": ["Low", "Medium", "High", "Critical"],
+                            "description": "Ticket priority level"
+                        },
+                        "category": {
+                            "type": "string",
+                            "enum": ["Network", "Hardware", "Software", "Security", "General"],
+                            "description": "Issue category"
+                        }
+                    },
+                    "required": ["title", "description"]
                 }
-            },
-            "required": ["title", "description"]
+            }
         }
     },
     {
-        "name": "get_ticket",
-        "description": "Retrieve details of a specific ticket by its ID.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "ticket_id": {
-                    "type": "string",
-                    "description": "The unique ticket identifier"
+        "toolSpec": {
+            "name": "get_ticket",
+            "description": "Retrieve details of a specific ticket by its ID.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "ticket_id": {
+                            "type": "string",
+                            "description": "The unique ticket identifier"
+                        }
+                    },
+                    "required": ["ticket_id"]
                 }
-            },
-            "required": ["ticket_id"]
+            }
         }
     },
     {
-        "name": "update_ticket",
-        "description": "Update an existing ticket's status, priority, or add notes.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "ticket_id": {
-                    "type": "string",
-                    "description": "The ticket ID to update"
-                },
-                "status": {
-                    "type": "string",
-                    "enum": ["Open", "In Progress", "Resolved", "Closed"],
-                    "description": "New ticket status"
-                },
-                "priority": {
-                    "type": "string",
-                    "enum": ["Low", "Medium", "High", "Critical"],
-                    "description": "New priority level"
-                },
-                "note": {
-                    "type": "string",
-                    "description": "Note to add to the ticket"
+        "toolSpec": {
+            "name": "update_ticket",
+            "description": "Update an existing ticket's status, priority, or add notes.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "ticket_id": {
+                            "type": "string",
+                            "description": "The ticket ID to update"
+                        },
+                        "status": {
+                            "type": "string",
+                            "enum": ["Open", "In Progress", "Resolved", "Closed"],
+                            "description": "New ticket status"
+                        },
+                        "priority": {
+                            "type": "string",
+                            "enum": ["Low", "Medium", "High", "Critical"],
+                            "description": "New priority level"
+                        },
+                        "note": {
+                            "type": "string",
+                            "description": "Note to add to the ticket"
+                        }
+                    },
+                    "required": ["ticket_id"]
                 }
-            },
-            "required": ["ticket_id"]
+            }
         }
     },
     {
-        "name": "get_ticket_summary",
-        "description": "Get a summary and overview of all tickets including counts by status, priority, and recent activity.",
-        "input_schema": {
-            "type": "object",
-            "properties": {}
+        "toolSpec": {
+            "name": "get_ticket_summary",
+            "description": "Get a summary and overview of all tickets including counts by status, priority, and recent activity.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }
         }
     }
 ]
@@ -353,8 +372,8 @@ def execute_tool(tool_name: str, tool_input: dict) -> dict:
         return {"error": f"Unknown tool: {tool_name}"}
 
 
-def invoke_agent(prompt: str, model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0") -> str:
-    """Invoke the agent with tool use capability."""
+def invoke_agent(prompt: str, model_id: str = "us.amazon.nova-pro-v1:0") -> str:
+    """Invoke the agent with tool use capability using Bedrock Converse API."""
     try:
         bedrock_client = get_bedrock_client()
         if bedrock_client is None:
@@ -369,6 +388,7 @@ To enable the AI agent, you need to configure AWS credentials in Streamlit Cloud
 ```toml
 AWS_ACCESS_KEY_ID = "your-access-key"
 AWS_SECRET_ACCESS_KEY = "your-secret-key"
+AWS_SESSION_TOKEN = "your-session-token"
 AWS_DEFAULT_REGION = "us-east-1"
 ```
 
@@ -378,46 +398,41 @@ In the meantime, you can still:
 
 The ticket API works without AWS credentials since it uses the public API Gateway endpoint."""
 
-        # Build conversation history
+        # Build conversation history for Converse API
         messages = []
         for msg in st.session_state.messages[-10:]:
             messages.append({
                 "role": msg["role"],
-                "content": [{"type": "text", "text": msg["content"]}]
+                "content": [{"text": msg["content"]}]
             })
 
         # Add current message
         messages.append({
             "role": "user",
-            "content": [{"type": "text", "text": prompt}]
+            "content": [{"text": prompt}]
         })
 
-        # First call with tools
-        body = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 4096,
-            "system": get_system_prompt(),
-            "messages": messages,
-            "tools": TOOLS,
-        }
-
-        response = bedrock_client.invoke_model(
+        # First call with tools using Converse API
+        response = bedrock_client.converse(
             modelId=model_id,
-            body=json.dumps(body),
+            messages=messages,
+            system=[{"text": get_system_prompt()}],
+            toolConfig={"tools": TOOLS},
+            inferenceConfig={"maxTokens": 4096}
         )
 
-        response_body = json.loads(response["body"].read())
-
         # Handle tool use loop
-        while response_body.get("stop_reason") == "tool_use":
+        while response.get("stopReason") == "tool_use":
             tool_results = []
+            assistant_content = response["output"]["message"]["content"]
 
             # Process each tool use block
-            for content_block in response_body.get("content", []):
-                if content_block.get("type") == "tool_use":
-                    tool_name = content_block.get("name")
-                    tool_input = content_block.get("input", {})
-                    tool_use_id = content_block.get("id")
+            for content_block in assistant_content:
+                if "toolUse" in content_block:
+                    tool_use = content_block["toolUse"]
+                    tool_name = tool_use["name"]
+                    tool_input = tool_use.get("input", {})
+                    tool_use_id = tool_use["toolUseId"]
 
                     # Show tool execution in sidebar
                     st.session_state.tool_results.append({
@@ -429,30 +444,38 @@ The ticket API works without AWS credentials since it uses the public API Gatewa
                     result = execute_tool(tool_name, tool_input)
 
                     tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_use_id,
-                        "content": json.dumps(result)
+                        "toolResult": {
+                            "toolUseId": tool_use_id,
+                            "content": [{"json": result}]
+                        }
                     })
 
             # Add assistant response and tool results to messages
-            messages.append({"role": "assistant", "content": response_body["content"]})
+            messages.append({"role": "assistant", "content": assistant_content})
             messages.append({"role": "user", "content": tool_results})
 
             # Continue conversation
-            body["messages"] = messages
-            response = bedrock_client.invoke_model(
+            response = bedrock_client.converse(
                 modelId=model_id,
-                body=json.dumps(body),
+                messages=messages,
+                system=[{"text": get_system_prompt()}],
+                toolConfig={"tools": TOOLS},
+                inferenceConfig={"maxTokens": 4096}
             )
-            response_body = json.loads(response["body"].read())
 
         # Extract final text response
         final_response = ""
-        for content_block in response_body.get("content", []):
-            if content_block.get("type") == "text":
-                final_response += content_block.get("text", "")
+        for content_block in response.get("output", {}).get("message", {}).get("content", []):
+            if "text" in content_block:
+                final_response += content_block["text"]
 
-        return final_response
+        # Clean up any thinking tags that Nova sometimes includes
+        if "<thinking>" in final_response:
+            # Remove thinking tags content
+            import re
+            final_response = re.sub(r'<thinking>.*?</thinking>\s*', '', final_response, flags=re.DOTALL)
+
+        return final_response.strip()
 
     except ClientError as e:
         error_msg = f"Error invoking Bedrock: {e.response['Error']['Message']}"
@@ -460,7 +483,7 @@ The ticket API works without AWS credentials since it uses the public API Gatewa
         return f"I apologize, but I encountered an error: {error_msg}"
     except Exception as e:
         st.error(f"Unexpected error: {str(e)}")
-        return f"I apologize, but I encountered an unexpected error. Please try again."
+        return f"I apologize, but I encountered an unexpected error: {str(e)}"
 
 
 def render_sidebar():
@@ -568,9 +591,9 @@ def render_sidebar():
             st.markdown("""
             **AgentCore Pattern:**
             1. User sends message
-            2. Claude analyzes request
-            3. Claude calls tools via API
-            4. Claude summarizes response
+            2. Amazon Nova Pro analyzes request
+            3. Nova Pro calls tools via API
+            4. Nova Pro summarizes response
 
             **Tools Available:**
             - `list_tickets`
