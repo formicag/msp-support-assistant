@@ -17,6 +17,8 @@ Usage:
 import json
 import os
 import time
+import uuid
+from datetime import datetime
 from typing import Optional
 
 import boto3
@@ -65,6 +67,14 @@ API_GATEWAY_ENDPOINT = os.environ.get(
     "API_GATEWAY_ENDPOINT",
     "https://p3h9ge8d92.execute-api.us-east-1.amazonaws.com"
 )
+
+# AgentCore Memory configuration
+AGENTCORE_MEMORY_ID = os.environ.get(
+    "AGENTCORE_MEMORY_ID",
+    "msp_support_assistant_memory-NeCST586bk"
+)
+# Default actor ID for demo (in production, this would be the authenticated user ID)
+DEFAULT_ACTOR_ID = os.environ.get("DEFAULT_ACTOR_ID", "demo-user")
 
 
 def load_config_from_ssm():
@@ -122,6 +132,173 @@ def get_bedrock_client():
     return st.session_state.bedrock_client
 
 
+def get_agentcore_runtime_client():
+    """Get or create AgentCore Runtime client for memory operations."""
+    if "agentcore_runtime_client" not in st.session_state:
+        st.session_state.agentcore_runtime_client = None
+        try:
+            # AgentCore Data Plane API - service name is "bedrock-agentcore"
+            client = boto3.client("bedrock-agentcore", region_name=AWS_REGION)
+            st.session_state.agentcore_runtime_client = client
+        except Exception:
+            st.session_state.agentcore_runtime_client = None
+    return st.session_state.agentcore_runtime_client
+
+
+def store_conversation_event(user_message: str, assistant_response: str, actor_id: str = None, session_id: str = None):
+    """Store a conversation exchange as an event in AgentCore Memory (short-term memory).
+
+    Args:
+        user_message: The user's message
+        assistant_response: The assistant's response
+        actor_id: The user identifier (defaults to DEFAULT_ACTOR_ID)
+        session_id: The session identifier
+    """
+    client = get_agentcore_runtime_client()
+    if not client:
+        return None
+
+    actor_id = actor_id or DEFAULT_ACTOR_ID
+    session_id = session_id or st.session_state.get("session_id", f"session-{int(time.time())}")
+
+    try:
+        # Create event payload with the conversation using the correct API format
+        # payload is a list with "conversational" items, content is a dict with "text"
+        payload = [
+            {
+                "conversational": {
+                    "role": "USER",
+                    "content": {"text": user_message}
+                }
+            },
+            {
+                "conversational": {
+                    "role": "ASSISTANT",
+                    "content": {"text": assistant_response}
+                }
+            }
+        ]
+
+        response = client.create_event(
+            memoryId=AGENTCORE_MEMORY_ID,
+            actorId=actor_id,
+            sessionId=session_id,
+            eventTimestamp=datetime.now().isoformat() + "Z",
+            payload=payload
+        )
+        return response
+    except ClientError as e:
+        # Log but don't fail the conversation
+        st.session_state.memory_errors = st.session_state.get("memory_errors", [])
+        st.session_state.memory_errors.append(f"CreateEvent: {str(e)}")
+        return None
+    except Exception as e:
+        st.session_state.memory_errors = st.session_state.get("memory_errors", [])
+        st.session_state.memory_errors.append(f"CreateEvent unexpected: {str(e)}")
+        return None
+
+
+def retrieve_memory_records(actor_id: str = None, namespaces: list = None) -> list:
+    """Retrieve long-term memory records for an actor.
+
+    Args:
+        actor_id: The user identifier (defaults to DEFAULT_ACTOR_ID)
+        namespaces: List of namespaces to search (defaults to all memory strategies)
+
+    Returns:
+        List of memory records containing extracted facts, preferences, and summaries
+    """
+    client = get_agentcore_runtime_client()
+    if not client:
+        return []
+
+    actor_id = actor_id or DEFAULT_ACTOR_ID
+
+    # Default namespaces based on our memory strategies
+    # Note: namespace pattern must match the strategy configuration
+    if namespaces is None:
+        namespaces = [
+            f"/preferences/{actor_id}",
+            f"/facts/{actor_id}",
+            f"/summaries/{actor_id}"
+        ]
+
+    all_records = []
+
+    for namespace in namespaces:
+        try:
+            # Use list_memory_records API with namespace parameter
+            response = client.list_memory_records(
+                memoryId=AGENTCORE_MEMORY_ID,
+                namespace=namespace,
+                maxResults=10
+            )
+            # Response contains memoryRecordSummaries
+            records = response.get("memoryRecordSummaries", [])
+            all_records.extend(records)
+        except ClientError as e:
+            # Some namespaces might not have records yet
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code not in ["ResourceNotFoundException", "ValidationException"]:
+                st.session_state.memory_errors = st.session_state.get("memory_errors", [])
+                st.session_state.memory_errors.append(f"ListMemory ({namespace}): {str(e)}")
+        except Exception as e:
+            st.session_state.memory_errors = st.session_state.get("memory_errors", [])
+            st.session_state.memory_errors.append(f"ListMemory unexpected: {str(e)}")
+
+    return all_records
+
+
+def format_memory_context(records: list) -> str:
+    """Format memory records into context for the system prompt.
+
+    Args:
+        records: List of memory records from retrieve_memory_records
+
+    Returns:
+        Formatted string to inject into system prompt
+    """
+    if not records:
+        return ""
+
+    context_parts = []
+
+    for record in records:
+        content = record.get("content", {})
+        record_type = record.get("strategyName", "unknown")
+
+        if record_type == "user_preferences":
+            # User preferences like priority levels, communication style
+            if "text" in content:
+                context_parts.append(f"User Preference: {content['text']}")
+            elif "blob" in content:
+                try:
+                    data = json.loads(content["blob"])
+                    context_parts.append(f"User Preference: {json.dumps(data)}")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+        elif record_type == "semantic_facts":
+            # Factual information like user name, department
+            if "text" in content:
+                context_parts.append(f"Known Fact: {content['text']}")
+            elif "blob" in content:
+                try:
+                    data = json.loads(content["blob"])
+                    context_parts.append(f"Known Fact: {json.dumps(data)}")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+        elif record_type == "session_summaries":
+            # Previous session summaries
+            if "text" in content:
+                context_parts.append(f"Previous Session: {content['text']}")
+
+    if context_parts:
+        return "\n\n## Memory Context (from previous interactions)\n" + "\n".join(context_parts)
+    return ""
+
+
 def init_session_state():
     """Initialize Streamlit session state."""
     if "messages" not in st.session_state:
@@ -132,6 +309,14 @@ def init_session_state():
         st.session_state.config = load_config_from_ssm()
     if "tool_results" not in st.session_state:
         st.session_state.tool_results = []
+    if "actor_id" not in st.session_state:
+        st.session_state.actor_id = DEFAULT_ACTOR_ID
+    if "memory_enabled" not in st.session_state:
+        st.session_state.memory_enabled = True
+    if "memory_errors" not in st.session_state:
+        st.session_state.memory_errors = []
+    if "memory_records" not in st.session_state:
+        st.session_state.memory_records = []
 
 
 def get_cognito_token() -> Optional[str]:
@@ -158,9 +343,13 @@ def get_cognito_token() -> Optional[str]:
         return None
 
 
-def get_system_prompt() -> str:
-    """Get the system prompt for the agent."""
-    return """You are an intelligent MSP (Managed Service Provider) Support Assistant with access to a ticket management system.
+def get_system_prompt(memory_context: str = "") -> str:
+    """Get the system prompt for the agent.
+
+    Args:
+        memory_context: Optional context from AgentCore Memory (long-term memory)
+    """
+    base_prompt = """You are an intelligent MSP (Managed Service Provider) Support Assistant with access to a ticket management system.
 
 You have access to the following tools:
 1. **list_tickets**: List all tickets or filter by status (Open, In Progress, Resolved, Closed)
@@ -183,7 +372,13 @@ For summaries, include:
 - Breakdown by priority
 - Recent activity (tickets in last 24 hours)
 
-If you can't access the tools, explain what you would do and suggest the user check the AgentCore Gateway configuration."""
+If you can't access the tools, explain what you would do and suggest the user check the AgentCore Gateway configuration.
+
+IMPORTANT: You have memory capabilities. If users tell you their name, preferences, or other personal information, acknowledge and remember it. Use any memory context provided below to personalize your responses."""
+
+    if memory_context:
+        return base_prompt + memory_context
+    return base_prompt
 
 
 def call_ticket_api(endpoint: str, method: str = "GET", data: Optional[dict] = None) -> dict:
@@ -408,6 +603,13 @@ In the meantime, you can still:
 
 The ticket API works without AWS credentials since it uses the public API Gateway endpoint."""
 
+        # Retrieve long-term memory context if enabled
+        memory_context = ""
+        if st.session_state.get("memory_enabled", True):
+            memory_records = retrieve_memory_records(st.session_state.get("actor_id"))
+            st.session_state.memory_records = memory_records
+            memory_context = format_memory_context(memory_records)
+
         # Build conversation history for Converse API
         # Must start with user message, so we filter and ensure proper alternation
         messages = []
@@ -448,7 +650,7 @@ The ticket API works without AWS credentials since it uses the public API Gatewa
         response = bedrock_client.converse(
             modelId=model_id,
             messages=messages,
-            system=[{"text": get_system_prompt()}],
+            system=[{"text": get_system_prompt(memory_context)}],
             toolConfig={"tools": TOOLS},
             inferenceConfig={"maxTokens": 4096}
         )
@@ -490,7 +692,7 @@ The ticket API works without AWS credentials since it uses the public API Gatewa
             response = bedrock_client.converse(
                 modelId=model_id,
                 messages=messages,
-                system=[{"text": get_system_prompt()}],
+                system=[{"text": get_system_prompt(memory_context)}],
                 toolConfig={"tools": TOOLS},
                 inferenceConfig={"maxTokens": 4096}
             )
@@ -507,7 +709,19 @@ The ticket API works without AWS credentials since it uses the public API Gatewa
             import re
             final_response = re.sub(r'<thinking>.*?</thinking>\s*', '', final_response, flags=re.DOTALL)
 
-        return final_response.strip()
+        final_text = final_response.strip()
+
+        # Store conversation event in AgentCore Memory (short-term memory)
+        # This happens asynchronously and doesn't block the response
+        if st.session_state.get("memory_enabled", True) and final_text:
+            store_conversation_event(
+                user_message=prompt,
+                assistant_response=final_text,
+                actor_id=st.session_state.get("actor_id"),
+                session_id=st.session_state.get("session_id")
+            )
+
+        return final_text
 
     except ClientError as e:
         error_msg = f"Error invoking Bedrock: {e.response['Error']['Message']}"
@@ -560,6 +774,49 @@ def render_sidebar():
         st.success("Ticket API: Available")
         st.caption(f"API: {API_GATEWAY_ENDPOINT[:35]}...")
 
+        # Memory status
+        memory_client = get_agentcore_runtime_client()
+        if memory_client:
+            st.success("Memory: Available")
+        else:
+            st.warning("Memory: Not configured")
+
+        st.markdown("---")
+
+        # Memory Settings
+        st.subheader("Memory Settings")
+
+        # Actor ID input (for personalization)
+        new_actor_id = st.text_input(
+            "Your Name/ID",
+            value=st.session_state.get("actor_id", DEFAULT_ACTOR_ID),
+            help="Enter your name or ID for personalized memory"
+        )
+        if new_actor_id != st.session_state.get("actor_id"):
+            st.session_state.actor_id = new_actor_id
+            st.session_state.memory_records = []  # Clear cached records
+
+        # Memory toggle
+        st.session_state.memory_enabled = st.checkbox(
+            "Enable Memory",
+            value=st.session_state.get("memory_enabled", True),
+            help="Store and retrieve conversation context"
+        )
+
+        # Show memory records count
+        record_count = len(st.session_state.get("memory_records", []))
+        if record_count > 0:
+            st.caption(f"📝 {record_count} memory record(s) loaded")
+        else:
+            st.caption("No memory records yet")
+
+        # Show memory errors if any
+        memory_errors = st.session_state.get("memory_errors", [])
+        if memory_errors:
+            with st.expander("⚠️ Memory Errors", expanded=False):
+                for err in memory_errors[-3:]:
+                    st.caption(err)
+
         st.markdown("---")
 
         # Tool execution log
@@ -585,6 +842,12 @@ def render_sidebar():
         if st.button("🔄 Clear Chat", use_container_width=True):
             st.session_state.messages = []
             st.session_state.tool_results = []
+            st.session_state.memory_errors = []
+            st.rerun()
+
+        if st.button("🧠 Clear Memory Cache", use_container_width=True):
+            st.session_state.memory_records = []
+            st.session_state.memory_errors = []
             st.rerun()
 
         st.markdown("---")
